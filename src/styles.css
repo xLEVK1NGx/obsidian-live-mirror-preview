@@ -1,0 +1,32 @@
+.mirror-preview-pane {
+  background: rgba(128, 128, 128, 0.05) !important;
+  border-left: 3px solid rgba(128, 128, 128, 0.3) !important;
+}
+
+.mirror-preview-pane .view-header {
+  background: rgba(128, 128, 128, 0.1) !important;
+}
+
+.mirror-preview-pane::before {
+  content: "🔗 MIRROR";
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  font-size: 10px;
+  color: rgba(128, 128, 128, 0.6);
+  font-weight: bold;
+  pointer-events: none;
+  z-index: 100;
+}
+
+.mirror-preview-pane .view-header .view-actions {
+  display: none !important;
+}
+
+.mirror-preview-pane .markdown-source-view {
+  display: none !important;
+}
+
+.mirror-preview-pane .markdown-reading-view {
+  display: block !important;
+}
