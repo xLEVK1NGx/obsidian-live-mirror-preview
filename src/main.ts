@@ -145,7 +145,7 @@ export default class MirrorPreviewPlugin extends Plugin {
       this.slaveLeaf = this.app.workspace.getLeaf("split", "vertical");
       console.log("[MirrorPreview] slave created");
       
-      await this.slaveLeaf.openFile(file, { mode: "preview" });
+      await this.slaveLeaf.openFile(file);
       await this.slaveLeaf.setViewState({
         type: "markdown",
         state: {
@@ -206,4 +206,4 @@ export default class MirrorPreviewPlugin extends Plugin {
   onunload() {
     console.log("[MirrorPreview] unloaded");
   }
-}
+}	
