@@ -1,99 +1,209 @@
-import {App, Editor, MarkdownView, Modal, Notice, Plugin} from 'obsidian';
-import {DEFAULT_SETTINGS, MyPluginSettings, SampleSettingTab} from "./settings";
+import {
+  Plugin,
+  WorkspaceLeaf,
+  Menu,
+  TFile,
+  MarkdownView,
+} from "obsidian";
 
-// Remember to rename these classes and interfaces!
+export default class MirrorPreviewPlugin extends Plugin {
+  slaveLeaf: WorkspaceLeaf | null = null;
+  private syncing = false;
+  private lastFile: string | null = null;
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+  async onload() {
+    console.log("[MirrorPreview] loaded");
 
-	async onload() {
-		await this.loadSettings();
+    this.addRibbonIcon("square-split-horizontal", "Mirror pane", () => {
+      this.createOrFocusMirror();
+    });
 
-		// This creates an icon in the left ribbon.
-		this.addRibbonIcon('dice', 'Sample', (evt: MouseEvent) => {
-			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
-		});
+    // Add custom CSS
+    const style = document.createElement("style");
+    style.textContent = `
+      .mirror-preview-pane {
+        background: rgba(128, 128, 128, 0.05) !important;
+        border-left: 3px solid rgba(128, 128, 128, 0.3) !important;
+      }
+      .mirror-preview-pane .view-header {
+        background: rgba(128, 128, 128, 0.1) !important;
+      }
+      .mirror-preview-pane::before {
+        content: "🔗 MIRROR";
+        position: absolute;
+        top: 4px;
+        right: 8px;
+        font-size: 10px;
+        color: rgba(128, 128, 128, 0.6);
+        font-weight: bold;
+        pointer-events: none;
+        z-index: 100;
+      }
+      /* Hide edit mode button */
+      .mirror-preview-pane .view-header .view-actions {
+        display: none !important;
+      }
+      /* Force read mode appearance */
+      .mirror-preview-pane .markdown-source-view {
+        display: none !important;
+      }
+      .mirror-preview-pane .markdown-reading-view {
+        display: block !important;
+      }
+    `;
+    document.head.appendChild(style);
 
-		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status bar text');
+    this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        this.checkSlaveLeafExists();
+        // Force preview mode on layout change
+        this.forcePreviewMode();
+      })
+    );
 
-		// This adds a simple command that can be triggered anywhere
-		this.addCommand({
-			id: 'open-modal-simple',
-			name: 'Open modal (simple)',
-			callback: () => {
-				new SampleModal(this.app).open();
-			}
-		});
-		// This adds an editor command that can perform some operation on the current editor instance
-		this.addCommand({
-			id: 'replace-selected',
-			name: 'Replace selected content',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				editor.replaceSelection('Sample editor command');
-			}
-		});
-		// This adds a complex command that can check whether the current state of the app allows execution of the command
-		this.addCommand({
-			id: 'open-modal-complex',
-			name: 'Open modal (complex)',
-			checkCallback: (checking: boolean) => {
-				// Conditions to check
-				const markdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-				if (markdownView) {
-					// If checking is true, we're simply "checking" if the command can be run.
-					// If checking is false, then we want to actually perform the operation.
-					if (!checking) {
-						new SampleModal(this.app).open();
-					}
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", (leaf) => {
+        if (leaf === this.slaveLeaf) return;
+        this.checkSlaveLeafExists();
+        if (this.slaveLeaf) {
+          this.syncSlave();
+        }
+      })
+    );
 
-					// This command will only show up in Command Palette when the check function returns true
-					return true;
-				}
-				return false;
-			}
-		});
+    // Prevent mode changes in slave
+    this.registerEvent(
+      this.app.workspace.on("editor-change", () => {
+        this.forcePreviewMode();
+      })
+    );
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new SampleSettingTab(this.app, this));
+    this.registerEvent(
+      (this.app.workspace as any).on(
+        "file-menu",
+        (menu: Menu, file: TFile) => {
+          menu.addItem((item: any) => {
+            item
+              .setTitle("Mirror pane as preview")
+              .setIcon("square-split-horizontal")
+              .onClick(() => {
+                this.createOrFocusMirror();
+              });
+          });
+        }
+      )
+    );
+  }
 
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			new Notice("Click");
-		});
+  forcePreviewMode() {
+    if (!this.slaveLeaf) return;
+    
+    const view = this.slaveLeaf.view;
+    if (view instanceof MarkdownView) {
+      const state = view.getState();
+      if (state.mode !== "preview") {
+        view.setState({ ...state, mode: "preview" }, { history: false });
+      }
+    }
+  }
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+  checkSlaveLeafExists() {
+    if (!this.slaveLeaf) return;
+    
+    const leaves = this.app.workspace.getLeavesOfType("markdown");
+    const exists = leaves.includes(this.slaveLeaf as any);
+    
+    if (!exists) {
+      console.log("[MirrorPreview] slave leaf closed");
+      this.slaveLeaf = null;
+      this.lastFile = null;
+    }
+  }
 
-	}
+  getMasterLeaf(): WorkspaceLeaf | null {
+    const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+    return view?.leaf ?? null;
+  }
 
-	onunload() {
-	}
+  async createOrFocusMirror() {
+    const master = this.getMasterLeaf();
+    if (!master) {
+      console.log("[MirrorPreview] no master leaf found");
+      return;
+    }
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData() as Partial<MyPluginSettings>);
-	}
+    const state = master.getViewState().state as { file?: string } | undefined;
+    if (!state?.file) {
+      console.log("[MirrorPreview] no file in master");
+      return;
+    }
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
-}
+    const file = this.app.vault.getAbstractFileByPath(state.file);
+    if (!(file instanceof TFile)) return;
 
-class SampleModal extends Modal {
-	constructor(app: App) {
-		super(app);
-	}
+    if (!this.slaveLeaf) {
+      this.slaveLeaf = this.app.workspace.getLeaf("split", "vertical");
+      console.log("[MirrorPreview] slave created");
+      
+      await this.slaveLeaf.openFile(file, { mode: "preview" });
+      await this.slaveLeaf.setViewState({
+        type: "markdown",
+        state: {
+          file: state.file,
+          mode: "preview",
+        },
+        active: false,
+      });
+      
+      this.slaveLeaf.view.containerEl.classList.add("mirror-preview-pane");
+      this.lastFile = state.file;
+    } else {
+      await this.syncSlave();
+    }
+  }
 
-	onOpen() {
-		let {contentEl} = this;
-		contentEl.setText('Woah!');
-	}
+  async syncSlave() {
+    if (this.syncing || !this.slaveLeaf) return;
 
-	onClose() {
-		const {contentEl} = this;
-		contentEl.empty();
-	}
+    const master = this.getMasterLeaf();
+    if (!master) return;
+
+    const state = master.getViewState().state as { file?: string } | undefined;
+    if (!state?.file) return;
+
+    if (this.lastFile === state.file) return;
+
+    const file = this.app.vault.getAbstractFileByPath(state.file);
+    if (!(file instanceof TFile)) return;
+
+    console.log("[MirrorPreview] syncing:", state.file);
+
+    this.syncing = true;
+
+    try {
+      await this.slaveLeaf.setViewState({
+        type: "markdown",
+        state: {
+          file: state.file,
+          mode: "preview",
+        },
+        active: false,
+      });
+
+      if (this.slaveLeaf.view?.containerEl) {
+        this.slaveLeaf.view.containerEl.classList.add("mirror-preview-pane");
+      }
+
+      this.forcePreviewMode();
+      this.lastFile = state.file;
+    } catch (error) {
+      console.error("[MirrorPreview] sync error:", error);
+    } finally {
+      this.syncing = false;
+    }
+  }
+
+  onunload() {
+    console.log("[MirrorPreview] unloaded");
+  }
 }
