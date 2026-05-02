@@ -4,6 +4,7 @@ import {
   Menu,
   TFile,
   MarkdownView,
+  EventRef,
 } from "obsidian";
 
 export default class MirrorPreviewPlugin extends Plugin {
@@ -11,52 +12,14 @@ export default class MirrorPreviewPlugin extends Plugin {
   private syncing = false;
   private lastFile: string | null = null;
 
-  async onload() {
-    console.log("[MirrorPreview] loaded");
-
+  async onload(): Promise<void> {
     this.addRibbonIcon("square-split-horizontal", "Mirror pane", () => {
-      this.createOrFocusMirror();
+      void this.createOrFocusMirror();
     });
-
-    // Add custom CSS
-    const style = document.createElement("style");
-    style.textContent = `
-      .mirror-preview-pane {
-        background: rgba(128, 128, 128, 0.05) !important;
-        border-left: 3px solid rgba(128, 128, 128, 0.3) !important;
-      }
-      .mirror-preview-pane .view-header {
-        background: rgba(128, 128, 128, 0.1) !important;
-      }
-      .mirror-preview-pane::before {
-        content: "🔗 MIRROR";
-        position: absolute;
-        top: 4px;
-        right: 8px;
-        font-size: 10px;
-        color: rgba(128, 128, 128, 0.6);
-        font-weight: bold;
-        pointer-events: none;
-        z-index: 100;
-      }
-      /* Hide edit mode button */
-      .mirror-preview-pane .view-header .view-actions {
-        display: none !important;
-      }
-      /* Force read mode appearance */
-      .mirror-preview-pane .markdown-source-view {
-        display: none !important;
-      }
-      .mirror-preview-pane .markdown-reading-view {
-        display: block !important;
-      }
-    `;
-    document.head.appendChild(style);
 
     this.registerEvent(
       this.app.workspace.on("layout-change", () => {
         this.checkSlaveLeafExists();
-        // Force preview mode on layout change
         this.forcePreviewMode();
       })
     );
@@ -66,36 +29,33 @@ export default class MirrorPreviewPlugin extends Plugin {
         if (leaf === this.slaveLeaf) return;
         this.checkSlaveLeafExists();
         if (this.slaveLeaf) {
-          this.syncSlave();
+          void this.syncSlave();
         }
       })
     );
 
-    // Prevent mode changes in slave
     this.registerEvent(
       this.app.workspace.on("editor-change", () => {
         this.forcePreviewMode();
       })
     );
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unsafe-argument, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-member-access
     this.registerEvent(
-      (this.app.workspace as any).on(
-        "file-menu",
-        (menu: Menu, file: TFile) => {
-          menu.addItem((item: any) => {
-            item
-              .setTitle("Mirror pane as preview")
-              .setIcon("square-split-horizontal")
-              .onClick(() => {
-                this.createOrFocusMirror();
-              });
-          });
-        }
-      )
+      (this.app.workspace as any).on("file-menu", (menu: Menu, file: TFile) => {
+        menu.addItem((item) => {
+          item
+            .setTitle("Mirror pane as preview")
+            .setIcon("square-split-horizontal")
+            .onClick(() => {
+              void this.createOrFocusMirror();
+            });
+        });
+      })
     );
   }
 
-  forcePreviewMode() {
+  forcePreviewMode(): void {
     if (!this.slaveLeaf) return;
     
     const view = this.slaveLeaf.view;
@@ -107,14 +67,13 @@ export default class MirrorPreviewPlugin extends Plugin {
     }
   }
 
-  checkSlaveLeafExists() {
+  checkSlaveLeafExists(): void {
     if (!this.slaveLeaf) return;
     
     const leaves = this.app.workspace.getLeavesOfType("markdown");
-    const exists = leaves.includes(this.slaveLeaf as any);
+    const exists = leaves.includes(this.slaveLeaf as WorkspaceLeaf);
     
     if (!exists) {
-      console.log("[MirrorPreview] slave leaf closed");
       this.slaveLeaf = null;
       this.lastFile = null;
     }
@@ -125,25 +84,18 @@ export default class MirrorPreviewPlugin extends Plugin {
     return view?.leaf ?? null;
   }
 
-  async createOrFocusMirror() {
+  async createOrFocusMirror(): Promise<void> {
     const master = this.getMasterLeaf();
-    if (!master) {
-      console.log("[MirrorPreview] no master leaf found");
-      return;
-    }
+    if (!master) return;
 
     const state = master.getViewState().state as { file?: string } | undefined;
-    if (!state?.file) {
-      console.log("[MirrorPreview] no file in master");
-      return;
-    }
+    if (!state?.file) return;
 
     const file = this.app.vault.getAbstractFileByPath(state.file);
     if (!(file instanceof TFile)) return;
 
     if (!this.slaveLeaf) {
       this.slaveLeaf = this.app.workspace.getLeaf("split", "vertical");
-      console.log("[MirrorPreview] slave created");
       
       await this.slaveLeaf.openFile(file);
       await this.slaveLeaf.setViewState({
@@ -162,7 +114,7 @@ export default class MirrorPreviewPlugin extends Plugin {
     }
   }
 
-  async syncSlave() {
+  async syncSlave(): Promise<void> {
     if (this.syncing || !this.slaveLeaf) return;
 
     const master = this.getMasterLeaf();
@@ -175,8 +127,6 @@ export default class MirrorPreviewPlugin extends Plugin {
 
     const file = this.app.vault.getAbstractFileByPath(state.file);
     if (!(file instanceof TFile)) return;
-
-    console.log("[MirrorPreview] syncing:", state.file);
 
     this.syncing = true;
 
@@ -196,14 +146,12 @@ export default class MirrorPreviewPlugin extends Plugin {
 
       this.forcePreviewMode();
       this.lastFile = state.file;
-    } catch (error) {
-      console.error("[MirrorPreview] sync error:", error);
     } finally {
       this.syncing = false;
     }
   }
 
-  onunload() {
-    console.log("[MirrorPreview] unloaded");
+  onunload(): void {
+    // Cleanup
   }
-}	
+}
